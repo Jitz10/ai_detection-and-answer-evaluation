@@ -4,7 +4,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 import os
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import google.generativeai as genai
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains.question_answering import load_qa_chain
 from langchain.prompts import PromptTemplate
@@ -23,10 +23,10 @@ genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 mongo_client = os.getenv("mongo_client")
 #mongo setup
-#client = MongoClient('mongodb://localhost:27017/')
+client = MongoClient(mongo_client)
 
 # Select the database
-#db = client['my_database']
+db = client['fosip']
 
 # Select the collection
 #collection = db['my_collection']
