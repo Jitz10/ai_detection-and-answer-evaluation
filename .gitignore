@@ -1,0 +1,26 @@
+# Virtual environment directories
+venv/
+env/
+
+# Byte-compiled Python files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Cache and log files
+*.log
+*.pot
+.cache/
+
+# IDE settings (e.g., VS Code, PyCharm)
+.vscode/
+.idea/
+
+# Environment variables
+.env
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+faiss_index
