@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 import base64
 import io
-
+from io import BytesIO
 app = Flask(__name__)
 
 # Load environment variables
@@ -24,45 +24,62 @@ mongo_client = MongoClient(os.getenv("mongo_client"))
 db = mongo_client['fosip']
 tests_collection = db['tests']
 
-def get_pdf_text(pdf_data):
-    """Extract text from PDF data"""
-    pdf_file = io.BytesIO(pdf_data)
-    pdf_reader = PdfReader(pdf_file)
+
+# def get_pdf_text(pdf_data):
+#     """Extract text from PDF data"""
+#     pdf_file = io.BytesIO(pdf_data)
+#     pdf_reader = PdfReader(pdf_file)
+#     text = ""
+#     for page in pdf_reader.pages:
+#         text += page.extract_text()
+#     return text
+
+def get_text_from_binary_pdfs(pdf_binaries):
+    """
+    Extract text from a list of binary PDF data.
+
+    Args:
+        pdf_binaries (list): A list of binary data representing PDF files.
+
+    Returns:
+        str: Concatenated text from all the PDFs.
+    """
     text = ""
-    for page in pdf_reader.pages:
-        text += page.extract_text()
+    for binary_pdf in pdf_binaries:
+        pdf_stream = BytesIO(binary_pdf)  # Wrap binary data in a BytesIO stream
+        pdf_reader = PdfReader(pdf_stream)  # Read the PDF from the binary stream
+        for page in pdf_reader.pages:
+            text += page.extract_text()  # Extract text from each page
     return text
+
 
 def get_text_chunks(text):
     """Split text into chunks"""
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=10000, chunk_overlap=1000)
     return text_splitter.split_text(text)
 
-def create_vector_store(text_chunks, test_id):
+def create_vector_store(text_chunks, test_name):
     """Create and save vector store"""
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vector_store = FAISS.from_texts(text_chunks, embedding=embeddings)
-    vector_store.save_local(f"faiss_index_{test_id}")
+    vector_store.save_local(f"faiss_index_{test_name}")
     return True
 
 def get_conversational_chain():
     """Create the evaluation chain"""
     prompt_template = """
-    You are an evaluator responsible for assessing a user answer based on the provided question, context, and evaluation rubrics. Your goal is to provide an accurate score and explanation based on the rubrics and the information available.
+    You are an evaluator responsible for assessing a user answer based on the provided question and context. Your goal is to provide an accurate score and explanation based on the information available.
 
     Instructions:
     - Carefully read the context to determine if it contains sufficient information to evaluate the user's answer.
     - If the context lacks adequate information to evaluate the answer, respond with: "Answer is not available in the context." and do not proceed further.
-    - If the context is sufficient, assign a score from 0 to 10 at the beginning of your response (formatted as the first two characters). This score should be based on the rubrics and should be followed by a clear, detailed explanation justifying the score.
-    - Highlight strengths and weaknesses as they relate to the rubrics.
+    - If the context is sufficient, assign a score from 0 to 10 at the beginning of your response (formatted as the first two characters). This score should be based on the information available and should be followed by a clear, detailed explanation justifying the score.
+    - Highlight strengths and weaknesses as they relate to the user's answer.
 
     Components:
 
     Context:
     {context}
-
-    Rubrics for Evaluation:
-    {rubrics}
 
     Question:
     {question}
@@ -74,78 +91,118 @@ def get_conversational_chain():
     """
 
     model = ChatGoogleGenerativeAI(model="gemini-pro", temperature=0.3)
-    prompt = PromptTemplate(template=prompt_template, input_variables=["context", "rubrics", "question", "user_answer"])
+    prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question", "user_answer"])
     return load_qa_chain(model, chain_type="stuff", prompt=prompt)
+
+@app.route('/',methods=['GET'])
+def tp():
+    return "Hello world"
+
+
 
 @app.route('/process_test', methods=['POST'])
 def process_test():
-    """Endpoint to process a new test PDF and create vector store"""
+    """Endpoint to process a test PDF and create a vector store."""
     try:
         data = request.json
-        test_id = data.get('test_id')
-        pdf_data = base64.b64decode(data.get('pdf_data'))
+        test_name = data.get('test_name')
+        if not test_name:
+            return jsonify({
+                'status': 'error',
+                'message': 'Test name is required.'
+            }), 400
         
-        # Extract text and create vector store
-        raw_text = get_pdf_text(pdf_data)
+        # Fetch test document from MongoDB
+        test_document = tests_collection.find_one({"name": test_name})
+        if not test_document or 'pdf' not in test_document or 'data' not in test_document['pdf']:
+            return jsonify({
+                'status': 'error',
+                'message': f'Test with name "{test_name}" not found or invalid PDF data in the database.'
+            }), 404
+        print("Checkpoint 0")
+        # Decode the PDF data from Base64
+        # pdf_data = base64.b64decode(test_document['pdf']['data'])
+        # pdf_stream = io.BytesIO(pdf_data)
+        # raw_pdf_data = pdf_stream.getvalue()
+        # print("raw")
+# Pass raw bytes to get_pdf_text
+        data = test_document['pdf']['data']
+        #print(data)
+        doc_name = test_name+".pdf"
+        with open(doc_name, "wb") as f:
+            f.write(data)
+        #print(data)
+        with open(doc_name, "rb") as f:
+            pdf_stream = BytesIO(f.read())
+            pdf_reader = PdfReader(pdf_stream)
+            raw_text = ""
+            for page in pdf_reader.pages:
+                raw_text += page.extract_text()
+        print(raw_text)
+        print("Checkpoint 1")
+        if not raw_text.strip():
+            return jsonify({
+                'status': 'error',
+                'message': 'The PDF has no extractable text.'
+            }), 400
+        
+        # Split text into chunks and create vector store
         text_chunks = get_text_chunks(raw_text)
-        create_vector_store(text_chunks, test_id)
+        create_vector_store(text_chunks, test_name)
         
-        # Store test information in MongoDB
-        tests_collection.update_one(
-            {'test_id': test_id},
-            {'$set': {
-                'status': 'processed',
-                'vector_store_path': f"faiss_index_{test_id}"
-            }},
-            upsert=True
-        )
+        
+        os.remove(doc_name)
         
         return jsonify({
             'status': 'success',
-            'message': f'Test {test_id} processed successfully'
+            'message': f'Test "{test_name}" processed successfully.'
         })
-        
+
     except Exception as e:
         return jsonify({
             'status': 'error',
-            'message': str(e)
+            'message': f'An error occurred: {str(e)}'
         }), 500
+
+if __name__ == '__main__':
+    app.run(debug=True)
 
 @app.route('/evaluate_answer', methods=['POST'])
 def evaluate_answer():
     """Endpoint to evaluate a user's answer"""
     try:
         data = request.json
-        test_id = data.get('test_id')
+        test_name = data.get('test_name')
         question = data.get('question')
-        rubrics = data.get('rubrics')
         user_answer = data.get('user_answer')
-        
+        print(test_name)
         # Load vector store for the test
         embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        print("emb")
+        vector_name = "faiss_index_"+ test_name
+        print("Vec:",vector_name)
         vector_store = FAISS.load_local(
-            f"faiss_index_{test_id}", 
+            vector_name, 
             embeddings,
             allow_dangerous_deserialization=True
         )
         
         # Get relevant documents
         docs = vector_store.similarity_search(question)
-        
+        print("C1")
         # Get evaluation chain
         chain = get_conversational_chain()
-        
+        print("c8")
         # Get initial evaluation
         response = chain(
             {
                 "input_documents": docs,
                 "question": question,
-                "rubrics": rubrics,
                 "user_answer": user_answer
             },
             return_only_outputs=True
         )
-        
+        print("c2")
         output_text = response["output_text"]
         
         # If context is insufficient, use Gemini directly
@@ -153,12 +210,8 @@ def evaluate_answer():
             model = genai.GenerativeModel("gemini-1.5-flash")
             query = f'''
                 You are an evaluator responsible for assessing a provided answer for evaluation.
-                Your task is to generate an informed evaluation based on the provided question,
-                answer, and rubrics.
-
-                Rubrics for Evaluation:
-                {rubrics}
-
+                Your task is to generate an informed evaluation based on the provided question and answer.
+                start your response with a rating between 0 - 10 and on next line continue with the evaluation.
                 Question:
                 {question}
 
@@ -181,6 +234,3 @@ def evaluate_answer():
             'status': 'error',
             'message': str(e)
         }), 500
-
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
