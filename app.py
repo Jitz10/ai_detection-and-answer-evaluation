@@ -13,8 +13,12 @@ from pymongo import MongoClient
 import base64
 import io
 from io import BytesIO
-app = Flask(__name__)
 
+
+from flask_cors import CORS 
+
+app = Flask(__name__)
+CORS(app)
 # Load environment variables
 load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -22,7 +26,7 @@ genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 # MongoDB setup
 mongo_client = MongoClient(os.getenv("mongo_client"))
 db = mongo_client['fosip']
-tests_collection = db['tests']
+
 
 
 # def get_pdf_text(pdf_data):
@@ -118,6 +122,7 @@ def tp():
 def process_test():
     """Endpoint to process a test PDF and create a vector store."""
     try:
+        tests_collection = db['tests']
         data = request.json
         test_name = data.get('test_name')
         if not test_name:
