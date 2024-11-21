@@ -58,11 +58,25 @@ def get_text_chunks(text):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=10000, chunk_overlap=1000)
     return text_splitter.split_text(text)
 
+
 def create_vector_store(text_chunks, test_name):
-    """Create and save vector store"""
+    """Create and save vector store in the 'vector_databases' directory."""
+    # Define the directory path
+    vector_dir = "vector_databases"
+    
+    # Ensure the directory exists
+    if not os.path.exists(vector_dir):
+        os.makedirs(vector_dir)  # Create the directory if it doesn't exist
+    
+    # Define the full path for saving the vector store
+    vector_path = os.path.join(vector_dir, f"faiss_index_{test_name}")
+    
+    # Create embeddings and the FAISS vector store
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vector_store = FAISS.from_texts(text_chunks, embedding=embeddings)
-    vector_store.save_local(f"faiss_index_{test_name}")
+    
+    # Save the vector store
+    vector_store.save_local(vector_path)
     return True
 
 def get_conversational_chain():
@@ -178,8 +192,26 @@ def evaluate_answer():
         print(test_name)
         # Load vector store for the test
         embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        print("emb")
-        vector_name = "faiss_index_"+ test_name
+        
+        
+        vector_dir = "vector_databases"
+        if not os.path.exists(vector_dir):
+            return jsonify({
+                'status': 'error',
+                'message': 'Vector database directory does not exist.'
+            }), 400
+
+        # Load vector store for the test
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        vector_name = os.path.join(vector_dir, f"faiss_index_{test_name}")
+        
+        if not os.path.exists(vector_name):
+            return jsonify({
+                'status': 'error',
+                'message': f'No vector store found for test "{test_name}".'
+            }), 404
+        
+        
         print("Vec:",vector_name)
         vector_store = FAISS.load_local(
             vector_name, 
