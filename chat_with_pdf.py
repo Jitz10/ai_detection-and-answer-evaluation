@@ -15,9 +15,6 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 
 
-
-
-
 load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
